@@ -4175,9 +4175,24 @@ class Spec:
         assert self.concrete
         assert other.concrete
 
-        virtuals_to_replace = [v.name for v in other.package.virtuals_provided if v in self]
+        virtuals_to_replace = [
+            v.name
+            for v in other.package.virtuals_provided
+            if v in self or v in self.package.virtuals_provided
+        ]
+        if transitive:
+            virtuals_to_replace.extend([
+                v.name
+                for od in other.traverse(root=False)
+                for v in od.package.virtuals_provided
+                if v in self or v in self.package.virtuals_provided
+            ])
+
         if virtuals_to_replace:
-            deps_to_replace = dict((self[v], other) for v in virtuals_to_replace)
+            deps_to_replace = {
+                self[v]: (other[v] if v in other else other)
+                for v in virtuals_to_replace
+            }
             # deps_to_replace = [self[v] for v in virtuals_to_replace]
         else:
             # TODO: sanity check and error raise here for other.name not in self
