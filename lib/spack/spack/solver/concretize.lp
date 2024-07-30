@@ -1377,30 +1377,85 @@ attr("node_flag_compiler_default", PackageNode)
 
 % Flag set to something
 attr("node_flag", PackageNode, FlagType, Flag) :- attr("node_flag_set", PackageNode, FlagType, Flag).
-
 #defined compiler_flag/3.
 
 
 %-----------------------------------------------------------------------------
-% Installed packages
+% Installed Packages
 %-----------------------------------------------------------------------------
-% the solver is free to choose at most one installed hash for each package
-{ attr("hash", node(ID, Package), Hash) : installed_hash(Package, Hash) } 1
- :- attr("node", node(ID, Package)), internal_error("Package must resolve to at most one hash").
 
+#defined installed_hash/2.
+#defined abi_splice_conditions_hold/4.
+
+% These are the previously concretized attributes of the installed package as 
+% a hash. It has the general form:
+% hash_attr(Hash, Attribute, PackageName, Args*)
+#defined hash_attr/3.
+#defined hash_attr/4.
+#defined hash_attr/5.
+#defined hash_attr/6.
+#defined hash_attr/7.
+
+{ attr("hash", node(ID, PackageName), Hash): installed_hash(PackageName, Hash) } 1 :-
+  attr("node", node(ID, PackageName)).
 % you can't choose an installed hash for a dev spec
 :- attr("hash", PackageNode, Hash), attr("variant_value", PackageNode, "dev_path", _).
-
 % You can't install a hash, if it is not installed
 :- attr("hash", node(ID, Package), Hash), not installed_hash(Package, Hash).
-% This should be redundant given the constraint above
-:- attr("node", PackageNode), 2 { attr("hash", PackageNode, Hash) }.
+% hash_attrs are versions, but can_splice_attr are usually node_version_satisfies
+hash_attr(Hash, "node_version_satisfies", PackageName, Constraint) :-
+  hash_attr(Hash, "version", PackageName, Version),
+  pkg_fact(PackageName, version_satisfies(Constraint, Version)).
 
-% if a hash is selected, we impose all the constraints that implies
-impose(Hash, PackageNode) :- attr("hash", PackageNode, Hash).
+imposed_constraint(Hash, Attr, PackageName) :-
+  hash_attr(Hash, Attr, PackageName).
+imposed_constraint(Hash, Attr, PackageName, A1) :-
+  hash_attr(Hash, Attr, PackageName, A1), Attr != "hash".
+imposed_constraint(Hash, Attr, PackageName, Arg1, Arg2) :- 
+  hash_attr(Hash, Attr, PackageName, Arg1, Arg2),
+  Attr != "depends_on",
+  Attr != "virtual_on_edge".
 
-% if we haven't selected a hash for a package, we'll be building it
-build(PackageNode) :- not attr("hash", PackageNode, _), attr("node", PackageNode).
+imposed_constraint(Hash, Attr, PackageName, A1, A2, A3) :-
+  hash_attr(Hash, Attr, PackageName, A1, A2, A3).
+
+imposed_constraint(Hash, "hash", HashName, ImpHash) :- 
+  hash_attr(Hash, "hash", HashName, ImpHash),
+  not abi_splice_conditions_hold(_, _, HashName, ImpHash).
+
+{ imposed_constraint(ParentHash, "hash", ChildName, ChildHash) } :-
+  hash_attr(ParentHash, "hash", ChildName, ChildHash),
+  abi_splice_conditions_hold(_, node(SID, SpliceName), ChildName, ChildHash).
+
+attr("splice_hash", node(SID, SpliceName), ChildName, ChildHash, node(ID, PackageName)) :- 
+  attr("hash", node(ID, PackageName), ParentHash),
+  hash_attr(ParentHash, "hash", ChildName, ChildHash),
+  abi_splice_conditions_hold(_, node(SID, SpliceName), ChildName, ChildHash),
+  not imposed_constraint(ParentHash, "hash", ChildName, ChildHash). 
+
+imposed_constraint(Hash, "dependency_holds", PackageName, DepName, Type) :-
+  hash_attr(Hash, "depends_on", PackageName, DepName, Type),
+  hash_attr(Hash, "hash", DepName, DepHash),
+  not attr("splice_hash", _, DepName, DepHash, _).
+
+imposed_constraint(Hash, "dependency_holds", PackageName, SpliceName, Type) :-
+  hash_attr(Hash, "depends_on", PackageName, DepName, Type),
+  hash_attr(Hash, "hash", DepName, DepHash),
+  attr("splice_hash", node(SID, SpliceName), DepName, DepHash, node(ID, PackageName)).
+
+imposed_constraint(Hash, "virtual_on_edge", PackageName, DepName, VirtName) :-
+  hash_attr(Hash, "virtual_on_edge", PackageName, DepName, VirtName),
+  not attr("splice_hash", _, DepName, _, _).
+
+imposed_constraint(Hash, "virtual_on_edge", PackageName, SpliceName, VirtName) :-
+  hash_attr(Hash, "virtual_on_edge", PackageName, DepName, VirtName),
+  attr("splice_hash", node(SID, SpliceName), DepName, _, _).
+
+impose(Hash, PackageNode) :- attr("hash", PackageNode, Hash), attr("node", PackageNode).
+
+% If there is not a hash for a package, we build it. 
+build(PackageNode) :- attr("node", PackageNode), not attr("hash", PackageNode, _).
+
 
 % Minimizing builds is tricky. We want a minimizing criterion
 
@@ -1413,6 +1468,7 @@ build(PackageNode) :- not attr("hash", PackageNode, _), attr("node", PackageNode
 % criteria for built specs -- so that they take precedence over the otherwise
 % topmost-priority criterion to reuse what is installed.
 %
+
 % The priority ranges are:
 %   1000+       Optimizations for concretization errors
 %   300 - 1000  Highest priority optimizations for valid solutions
@@ -1438,11 +1494,9 @@ build_priority(PackageNode, 0)   :- not build(PackageNode), attr("node", Package
    pkg_fact(Package, version_declared(Version, Weight, "installed")),
    not optimize_for_reuse().
 
-#defined installed_hash/2.
 
 % This statement, which is a hidden feature of clingo, let us avoid cycles in the DAG
 #edge (A, B) : depends_on(A, B).
-
 
 %-----------------------------------------------------------------
 % Optimization to avoid errors
