@@ -54,6 +54,7 @@ from spack import traverse
 
 from .core import (
     AspFunction,
+    AspVar,
     NodeArgument,
     ast_sym,
     ast_type,
@@ -1071,6 +1072,9 @@ class SpackSolverSetup:
         # list of unique libc specs targeted by compilers (or an educated guess if no compiler)
         self.libcs: List[spack.spec.Spec] = []
 
+        # If true, we have to load the code for synthesizing splices
+        self.enable_splicing: bool = spack.config.CONFIG.get("concretizer:splice")
+
     def pkg_version_rules(self, pkg):
         """Output declared versions of a package.
 
@@ -1237,6 +1241,10 @@ class SpackSolverSetup:
 
         # dependencies
         self.package_dependencies_rules(pkg)
+
+        # splices
+        if self.enable_splicing:
+            self.package_splice_rules(pkg)
 
         # virtual preferences
         self.virtual_preferences(
@@ -1541,6 +1549,48 @@ class SpackSolverSetup:
                 )
 
                 self.gen.newline()
+
+    def package_splice_rules(self, pkg):
+        self.gen.h2("Splice rules")
+        for i, (cond, spec_to_splice) in enumerate(sorted(pkg.splice_specs.items())):
+            with spec_with_name(cond, pkg.name):
+                self.version_constraints.add((cond.name, cond.versions))
+                self.version_constraints.add((spec_to_splice.name, spec_to_splice.versions))
+                when_spec_attrs = []
+                splice_spec_hash_attrs = []
+                # splice_set_fact = fn.splice_set_id(i, pkg.name, spec_to_splice.name)
+                # self.gen.fact(splice_set_fact)
+                hash_var = AspVar("Hash")
+                splice_node = fn.node(AspVar("NID"), cond.name)
+                for c in self.spec_clauses(cond, body=True, required_from=None):
+                    args = c.args
+                    if args[0] == "node":
+                        continue
+                    when_spec_attrs.append(fn.attr(args[0], splice_node, *args[2:]))
+
+                for c in self.spec_clauses(spec_to_splice, body=True, required_from=None):
+                    args = c.args
+                    if args[0] == "node":
+                        continue
+                    splice_spec_hash_attrs.append(fn.hash_attr(hash_var, *args))
+
+                rule_head = fn.abi_splice_conditions_hold(
+                    i, splice_node, spec_to_splice.name, hash_var
+                )
+                rule_body_components = [
+                    # splice_set_fact,
+                    fn.attr("node", splice_node),
+                    fn.installed_hash(spec_to_splice.name, hash_var),
+                ]
+                rule_body_components.extend(when_spec_attrs)
+                rule_body_components.extend(splice_spec_hash_attrs)
+                rule_body = ",\n  ".join(str(r) for r in rule_body_components)
+                rule = f"{rule_head} :-\n  {rule_body}."
+                self.gen.append(rule)
+
+            self.gen.newline()
+
+    ###
 
     def virtual_preferences(self, pkg_name, func):
         """Call func(vspec, provider, i) for each of pkg's provider prefs."""
@@ -2392,8 +2442,9 @@ class SpackSolverSetup:
         for h, spec in self.reusable_and_possible.explicit_items():
             # this indicates that there is a spec like this installed
             self.gen.fact(fn.installed_hash(spec.name, h))
-            # this describes what constraints it imposes on the solve
-            self.impose(h, spec, body=True)
+            for pred in self.spec_clauses(spec, body=True, required_from=None):
+                self.gen.fact(fn.hash_attr(h, *pred.args))
+            # otherwise, hashes impose their constraints directly
             self.gen.newline()
             # Declare as possible parts of specs that are not in package.py
             # - Add versions to possible versions
@@ -3344,6 +3395,7 @@ class SpecBuilder:
         return NodeArgument(id="0", pkg=pkg)
 
     def __init__(self, specs, hash_lookup=None):
+        self._specs: Dict[NodeArgument, spack.spec.Spec]
         self._specs = {}
         self._result = None
         self._command_line_specs = specs
@@ -3357,6 +3409,21 @@ class SpecBuilder:
     def hash(self, node, h):
         if node not in self._specs:
             self._specs[node] = self._hash_lookup[h]
+
+    def splice_hash(
+        self,
+        splice_node: NodeArgument,
+        orig_name: str,
+        splice_hash: str,
+        parent_node: NodeArgument,
+    ):
+        parent_spec = self._specs[parent_node]
+        pre_splice_spec = self._hash_lookup[splice_hash]
+        assert pre_splice_spec in parent_spec.dependencies()
+        splice_spec = self._specs[splice_node]
+        splice_spec._finalize_concretization()  # splice hashes come last, so this is fine
+        self._specs[parent_node] = parent_spec.splice(splice_spec, transitive=False)
+        return
 
     def node(self, node):
         if node not in self._specs:
@@ -3536,6 +3603,8 @@ class SpecBuilder:
             return (0, 0)  # note out of order so this goes last
         elif name == "virtual_on_edge":
             return (1, 0)
+        elif name == "splice_hash":
+            return (2, 0)
         else:
             return (-1, 0)
 
@@ -3544,7 +3613,6 @@ class SpecBuilder:
         # them here so that directives that build objects (like node and
         # node_compiler) are called in the right order.
         self.function_tuples = sorted(set(function_tuples), key=self.sort_fn)
-
         self._specs = {}
         for name, args in self.function_tuples:
             if SpecBuilder.ignored_attributes.match(name):
@@ -3577,8 +3645,9 @@ class SpecBuilder:
                 # do not bother calling actions on it except for node_flag_source,
                 # since node_flag_source is tracking information not in the spec itself
                 spec = self._specs.get(args[0])
-                if spec and spec.concrete and name != "node_flag_source":
-                    continue
+                if spec and spec.concrete:
+                    if name != "node_flag_source" and name != "splice_hash":
+                        continue
 
             action(*args)
 
@@ -3831,7 +3900,6 @@ class ReusableSpecsSelector:
         result = []
         for reuse_source in self.reuse_sources:
             result.extend(reuse_source.selected_specs())
-
         # If we only want to reuse dependencies, remove the root specs
         if self.reuse_strategy == ReuseStrategy.DEPENDENCIES:
             result = [spec for spec in result if not any(root in spec for root in specs)]
@@ -4000,8 +4068,6 @@ class SolverError(InternalConcretizerError):
             msg += ", errors are:" + "".join([f"\n    {conflict}" for conflict in conflicts])
 
         super().__init__(msg)
-
-        self.provided = provided
 
         # Add attribute expected of the superclass interface
         self.required = None
