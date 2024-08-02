@@ -1550,30 +1550,97 @@ class SpackSolverSetup:
 
                 self.gen.newline()
 
+
+    def _gen_match_variant_splice_constraints(
+            self,
+            pkg,
+            cond_spec: "spack.spec.Spec", 
+            splice_spec: "spack.spec.Spec",
+            hash_asp_var: "AspVar",
+            splice_node,
+            match_variants: List[str]
+    ):
+        # If there are no variants to match, no constraints are needed
+        variant_constraints = []
+        for i, variant_name in enumerate(match_variants):
+            variant, vari_cond_specs = pkg.variants[variant_name]
+            # the spliceable config of the package always includes the variant
+            if vari_cond_specs == [] or any(cond_spec.satisfies(s) for s in vari_cond_specs):
+                if variant.multi: 
+                    continue # cannot automatically match multi-valued variants
+                value_var = AspVar(f"VariValue{i}")
+                attr_constraint = fn.attr(
+                    "variant_value",
+                    splice_node,
+                    variant_name,
+                    value_var
+                )
+                hash_attr_constraint = fn.hash_attr(
+                    hash_asp_var,
+                    splice_spec.name,
+                    "variant_value",
+                    variant_name,
+                    value_var
+                )
+                variant_constraints.append(attr_constraint)
+                variant_constraints.append(hash_attr_constraint)
+        return variant_constraints
+                        
+
     def package_splice_rules(self, pkg):
         self.gen.h2("Splice rules")
-        for i, (cond, spec_to_splice) in enumerate(sorted(pkg.splice_specs.items())):
+        for i, (cond, (spec_to_splice, match_variants)) in enumerate(sorted(pkg.splice_specs.items())):
             with spec_with_name(cond, pkg.name):
                 self.version_constraints.add((cond.name, cond.versions))
                 self.version_constraints.add((spec_to_splice.name, spec_to_splice.versions))
                 when_spec_attrs = []
                 splice_spec_hash_attrs = []
-                # splice_set_fact = fn.splice_set_id(i, pkg.name, spec_to_splice.name)
-                # self.gen.fact(splice_set_fact)
                 hash_var = AspVar("Hash")
                 splice_node = fn.node(AspVar("NID"), cond.name)
+                explicit_variants = []
                 for c in self.spec_clauses(cond, body=True, required_from=None):
                     args = c.args
                     if args[0] == "node":
                         continue
+                    if args[0] == "variant_value":
+                        explicit_variants.append(args[2])
                     when_spec_attrs.append(fn.attr(args[0], splice_node, *args[2:]))
 
                 for c in self.spec_clauses(spec_to_splice, body=True, required_from=None):
                     args = c.args
                     if args[0] == "node":
                         continue
+                    if args[0] == "variant_value":
+                        explicit_variants.append(args[2])
                     splice_spec_hash_attrs.append(fn.hash_attr(hash_var, *args))
-
+                if match_variants is None:
+                    variant_constraints = []
+                elif match_variants == "*":
+                    filt_match_variants = [
+                        v for v in pkg.variants.keys() if v not in explicit_variants
+                    ]
+                    variant_constraints = self._gen_match_variant_splice_constraints(
+                        pkg,
+                        cond,
+                        spec_to_splice,
+                        hash_var,
+                        splice_node,
+                        filt_match_variants
+                    )
+                else:
+                    if any(v in explicit_variants for v in match_variants):
+                        raise Exception(
+                            "Overlap between match_variants and explicitly set variants"
+                        )
+                    variant_constraints = self._gen_match_variant_splice_constraints(
+                        pkg,
+                        cond,
+                        spec_to_splice,
+                        hash_var,
+                        splice_node,
+                        match_variants
+                    )
+                    
                 rule_head = fn.abi_splice_conditions_hold(
                     i, splice_node, spec_to_splice.name, hash_var
                 )
@@ -1584,13 +1651,12 @@ class SpackSolverSetup:
                 ]
                 rule_body_components.extend(when_spec_attrs)
                 rule_body_components.extend(splice_spec_hash_attrs)
+                rule_body_components.extend(variant_constraints)
                 rule_body = ",\n  ".join(str(r) for r in rule_body_components)
                 rule = f"{rule_head} :-\n  {rule_body}."
                 self.gen.append(rule)
 
             self.gen.newline()
-
-    ###
 
     def virtual_preferences(self, pkg_name, func):
         """Call func(vspec, provider, i) for each of pkg's provider prefs."""
