@@ -4211,26 +4211,30 @@ class Spec:
                         self.name, other.name
                     )
                 )
-            for n in d.traverse(root=False):
-                if not all(
-                    any(
-                        v in other_n.package.virtuals_provided
-                        for other_n in other.traverse(root=False)
-                    )
-                    or v not in self
-                    for v in n.package.virtuals_provided
-                ):
-                    raise SpliceError(
-                        (
-                            "Splice between {0} and {1} will not provide " "the same virtuals."
-                        ).format(self.name, other.name)
-                    )
+            if transitive:
+                for n in d.traverse(root=False):
+                    for v in n.package.virtuals_provided:
+                        if not (
+                            any(
+                                v in other_n.package.virtuals_provided
+                                for other_n in other.traverse(root=False)
+                            )
+                            or v not in self):
+                            print(f"Deps to replace: {deps_to_replace}")
+                            raise SpliceError(
+                                f"Splice between {self.name} and {other.name} will not provide " "the same virtuals."
+                                f"d: {d}\n\n"
+                                f"n: {n}\n\n"
+                                f"v: {v}\n\n"
+                            )
 
         # For now, check that we don't have DAG with multiple specs from the
         # same package
         def multiple_specs(root):
             counter = collections.Counter([node.name for node in root.traverse()])
-            _, max_number = counter.most_common()[0]
+            spec, max_number = counter.most_common()[0]
+            if max_number > 1:
+                print(f"{root} has multiple copies of {spec}")
             return max_number > 1
 
         if multiple_specs(self) or multiple_specs(other):
