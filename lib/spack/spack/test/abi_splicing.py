@@ -254,3 +254,32 @@ def test_mpi_splices(abi_splice_database, abi_splice_mock_packages, monkeypatch)
     mpileaks_openmpi.package.do_uninstall()
     mpileaks_mpich.package.do_uninstall()
     assert True
+
+
+@pytest.mark.only_clingo("Synthesized splices are not supported by the old concretizer")
+def test_double_splice(abi_splice_database, abi_splice_mock_packages, monkeypatch):
+    spack.config.set("concretizer:reuse", True)
+    monkeypatch.setattr(
+        spack.solver.asp, "_has_runtime_dependencies", _mock_has_runtime_dependencies
+    )
+    cache = [
+        Spec("baz@1 ^bar@1.0.0+compat ^foo@1.0.0+compat"),
+        Spec("bar@1.0.2+compat ^foo@1.0.1+compat"),
+        Spec("foo@1.0.2+compat"),
+    ]
+    for s in cache:
+        s.concretize()
+        s.package.do_install(fake=True, explicit=True)
+    freeze_builds_config = {
+        "baz": {"buildable": False},
+        "bar": {"buildable": False},
+        "foo": {"buildable": False}
+    }
+    spack.config.set("packages", freeze_builds_config)
+    goal_spec = Spec("baz@1 ^bar@1.0.2+compat ^foo@1.0.2+compat")
+    with pytest.raises(Exception):
+        goal_spec.concretized()
+    spack.config.set("concretizer:splice", True)
+    concretized_goal = goal_spec.concretized()
+    for edge in concretized_goal.edges_to_dependencies():
+        assert edge.spec.build_spec in cache
