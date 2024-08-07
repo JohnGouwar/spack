@@ -3472,6 +3472,9 @@ class SpecBuilder:
         # from this dictionary during reconstruction
         self._hash_lookup = hash_lookup or {}
 
+        self._splices: Dict[NodeArgument, List[Tuple[str, str, NodeArgument]]]
+        self._splices = {}
+
     def hash(self, node, h):
         if node not in self._specs:
             self._specs[node] = self._hash_lookup[h]
@@ -3483,12 +3486,11 @@ class SpecBuilder:
         splice_hash: str,
         parent_node: NodeArgument,
     ):
-        parent_spec = self._specs[parent_node]
-        pre_splice_spec = self._hash_lookup[splice_hash]
-        assert pre_splice_spec in parent_spec.dependencies()
-        splice_spec = self._specs[splice_node]
-        splice_spec._finalize_concretization()  # splice hashes come last, so this is fine
-        self._specs[parent_node] = parent_spec.splice(splice_spec, transitive=False)
+        tup = (orig_name, splice_hash, splice_node)
+        if parent_node in self._splices:
+            self._splices[parent_node].append(tup)
+        else:
+            self._splices[parent_node] = [tup]
         return
 
     def node(self, node):
@@ -3674,6 +3676,32 @@ class SpecBuilder:
         else:
             return (-1, 0)
 
+    def _finalize_splices(self):
+        for parent_node, splices in self._splices.items():
+            parent_spec = self._specs[parent_node]
+            build_spec = parent_spec.copy()
+            new_parent = parent_spec.copy(deps=False)
+            new_parent.build_spec = build_spec
+            spliced_names = set()
+            for orig_name, _, splice_node in splices:
+                orig_dependency = parent_spec.edges_to_dependencies(orig_name)[0]
+                virtuals = orig_dependency.virtuals
+                depflag = orig_dependency.depflag
+                new_parent.add_dependency_edge(
+                    self._specs[splice_node],
+                    depflag=depflag,
+                    virtuals=virtuals
+                )
+                spliced_names.add(orig_name)
+            for dep_edge in parent_spec.edges_to_dependencies():
+                if dep_edge.spec.name not in spliced_names:
+                    new_parent.add_dependency_edge(
+                        dep_edge.spec,
+                        depflag=dep_edge.depflag,
+                        virtuals=dep_edge.virtuals
+                    )
+            self._specs[parent_node] = new_parent
+
     def build_specs(self, function_tuples):
         # Functions don't seem to be in particular order in output.  Sort
         # them here so that directives that build objects (like node and
@@ -3717,6 +3745,7 @@ class SpecBuilder:
 
             action(*args)
 
+        self._finalize_splices()
         # fix flags after all specs are constructed
         self.reorder_flags()
 
