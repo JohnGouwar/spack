@@ -859,6 +859,8 @@ class PyclingoDriver:
             self.control.load(os.path.join(parent_dir, "libc_compatibility.lp"))
         else:
             self.control.load(os.path.join(parent_dir, "os_compatibility.lp"))
+        if setup.enable_splicing:
+            self.control.load(os.path.join(parent_dir, "splices.lp"))
 
         timer.stop("load")
 
