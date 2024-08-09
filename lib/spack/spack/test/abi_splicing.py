@@ -283,3 +283,77 @@ def test_double_splice(abi_splice_database, abi_splice_mock_packages, monkeypatc
     concretized_goal = goal_spec.concretized()
     for edge in concretized_goal.edges_to_dependencies():
         assert edge.spec.build_spec in cache
+    for s in cache:
+        s.package.do_uninstall()
+
+        
+@pytest.mark.only_clingo("Synthesized splices are not supported by the old concretizer")
+def test_manyvariant_star_matching_variant_splice(
+        abi_splice_database,
+        abi_splice_mock_packages,
+        monkeypatch
+):
+    spack.config.set("concretizer:reuse", True)
+    monkeypatch.setattr(
+        spack.solver.asp, "_has_runtime_dependencies", _mock_has_runtime_dependencies
+    )
+    cache = [
+        # can_splice("manyvariants@1.0.0", when="@1.0.1", match_variants="*")
+        Spec("depends-on-manyvariants ^manyvariants@1.0.0+a+b c=v1 d=v2"),
+        Spec("depends-on-manyvariants ^manyvariants@1.0.0~a~b c=v3 d=v3")
+    ]
+    for s in cache:
+        s.concretize()
+        s.package.do_install(fake=True, explicit=True)
+    goal_specs = [
+        Spec("depends-on-manyvariants ^manyvariants@1.0.1+a+b c=v1 d=v2"),
+        Spec("depends-on-manyvariants ^manyvariants@1.0.1~a~b c=v3 d=v3")
+    ]
+    freeze_build_config = {
+        "depends-on-manyvariants": {"buildable": False}
+    }
+    spack.config.set("packages", freeze_build_config)
+    for goal in goal_specs:
+        with pytest.raises(Exception):
+            goal.concretized()
+    spack.config.set("concretizer:splice", True)
+    for goal in goal_specs:
+        goal.concretized()
+
+    for s in cache:
+        s.package.do_uninstall()
+    assert True
+    
+def test_manyvariant_limited_matching(abi_splice_database, abi_splice_mock_packages, monkeypatch):
+    spack.config.set("concretizer:reuse", True)
+    monkeypatch.setattr(
+        spack.solver.asp, "_has_runtime_dependencies", _mock_has_runtime_dependencies
+    )
+    cache = [
+        #can_splice("manyvariants@2.0.0+a~b", when="@2.0.1~a+b", match_variants=["c", "d"])
+        Spec("depends-on-manyvariants@2.0 ^manyvariants@2.0.0+a~b c=v3 d=v2"),
+        #can_splice("manyvariants@2.0.0 c=v1 d=v1", when="@2.0.1+a+b")
+        Spec("depends-on-manyvariants@2.0 ^manyvariants@2.0.0~a~b c=v1 d=v1")
+    ]
+    for s in cache:
+        s.concretize()
+        s.package.do_install(fake=True, explicit=True)
+    goal_specs = [
+        Spec("depends-on-manyvariants@2.0 ^manyvariants@2.0.1~a+b c=v3 d=v2"),
+        Spec("depends-on-manyvariants@2.0 ^manyvariants@2.0.1+a+b c=v3 d=v3")
+    ]
+    freeze_build_config = {
+        "depends-on-manyvariants": {"buildable": False}
+    }
+    spack.config.set("packages", freeze_build_config)
+    for s in goal_specs:
+        with pytest.raises(Exception):
+            s.concretized()
+    spack.config.set("concretizer:splice", True)
+    for s in goal_specs:
+        s.concretized()
+    for s in cache:
+        s.package.do_uninstall()
+
+    assert True
+
