@@ -3852,8 +3852,8 @@ def _has_runtime_dependencies(spec: spack.spec.Spec) -> bool:
         return True
 
     if spec.compiler.name == "gcc" and not spec.dependencies("gcc-runtime"):
-        return True #TODO: switch back to false
-
+        return False
+    
     if spec.compiler.name == "oneapi" and not spec.dependencies("intel-oneapi-runtime"):
         return False
 
