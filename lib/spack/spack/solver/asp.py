@@ -1577,8 +1577,8 @@ class SpackSolverSetup:
                 )
                 hash_attr_constraint = fn.hash_attr(
                     hash_asp_var,
-                    splice_spec.name,
                     "variant_value",
+                    splice_spec.name,
                     variant_name,
                     value_var
                 )
@@ -1617,7 +1617,7 @@ class SpackSolverSetup:
                     variant_constraints = []
                 elif match_variants == "*":
                     filt_match_variants = [
-                        v for v in pkg.variants.keys() if v not in explicit_variants
+                        v for v in pkg.variants.keys() if v not in explicit_variants and v != "build_system"
                     ]
                     variant_constraints = self._gen_match_variant_splice_constraints(
                         pkg,
