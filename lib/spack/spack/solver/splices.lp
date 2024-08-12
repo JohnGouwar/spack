@@ -25,13 +25,15 @@
 % dependency of a concrete spec the solver free to choose whether to continue
 % with the exact hash semantics by simply imposing the child hash, or introducing
 % a spliced node as the dependency instead 
-1 {
-  imposed_constraint(ParentHash, "hash", ChildName, ChildHash);
-  attr("splice_hash", node(SID, SpliceName), ChildName, ChildHash, node(ID, PackageName))   
-} 1 :-
-  attr("hash", node(ID, PackageName), ParentHash),
+{ imposed_constraint(ParentHash, "hash", ChildName, ChildHash) } :-
   hash_attr(ParentHash, "hash", ChildName, ChildHash),
   abi_splice_conditions_hold(_, node(SID, SpliceName), ChildName, ChildHash).
+
+attr("splice_hash", node(SID, SpliceName), ChildName, ChildHash, ParentNode) :-
+  attr("hash", ParentNode, ParentHash),
+  hash_attr(ParentHash, "hash", ChildName, ChildHash),
+  abi_splice_conditions_hold(_, node(SID, SpliceName), ChildName, ChildHash),
+  not imposed_constraint(ParentHash, "hash", ChildName, ChildHash).
   
 % Names and virtual providers may change when a dependency is spliced in
 imposed_constraint(Hash, "dependency_holds", PackageName, SpliceName, Type) :-
