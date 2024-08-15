@@ -357,3 +357,61 @@ def test_manyvariant_limited_matching(abi_splice_database, abi_splice_mock_packa
 
     assert True
 
+def test_external_splice_same_name(abi_splice_database, abi_splice_mock_packages, monkeypatch):
+    spack.config.set("concretizer:reuse", True)
+    monkeypatch.setattr(
+        spack.solver.asp, "_has_runtime_dependencies", _mock_has_runtime_dependencies
+    )
+    cache = [
+        Spec("bar@1.0.0 ^foo@1.0.0+compat"),
+        Spec("baz@1.0 ^bar@1.0.1 ^foo@1.0.1+compat")
+    ]
+    packages_yaml = {
+        "foo": {
+            "externals": [{"spec": "foo@1.0.2+compat", "prefix": "/usr"}],
+            "buildable": True
+        },
+        "bar": {"buildable": True},
+        "foo": {"buildable": True}
+    }
+    for s in cache:
+        s.concretize()
+        s.package.do_install(fake=True, explicit=True)
+    spack.config.set("packages", packages_yaml)
+    goal_specs = [
+        Spec("bar@1.0.0 ^foo@1.0.2"),
+        Spec("baz@1.0 ^bar@1.0.1 ^foo@1.0.2")
+    ]
+    spack.config.set("concretizer:splice", True)
+    for s in goal_specs:
+        s.concretized()
+
+        
+def test_external_splice_mpi(abi_splice_database, abi_splice_mock_packages, monkeypatch):
+    spack.config.set("concretizer:reuse", True)
+    monkeypatch.setattr(
+        spack.solver.asp, "_has_runtime_dependencies", _mock_has_runtime_dependencies
+    )
+    cache = [
+        Spec("bar@1.0.0 ^foo@1.0.0+compat"),
+        Spec("baz@1.0 ^bar@1.0.1 ^foo@1.0.1+compat")
+    ]
+    packages_yaml = {
+        "foo": {
+            "externals": [{"spec": "foo@1.0.2+compat", "prefix": "/usr"}],
+            "buildable": True
+        },
+        "bar": {"buildable": True},
+        "foo": {"buildable": True}
+    }
+    for s in cache:
+        s.concretize()
+        s.package.do_install(fake=True, explicit=True)
+    spack.config.set("packages", packages_yaml)
+    goal_specs = [
+        Spec("bar@1.0.0 ^foo@1.0.2"),
+        Spec("baz@1.0 ^bar@1.0.1 ^foo@1.0.2")
+    ]
+    spack.config.set("concretizer:splice", True)
+    for s in goal_specs:
+        s.concretized()
