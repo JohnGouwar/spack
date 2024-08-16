@@ -163,7 +163,6 @@ def _mock_has_runtime_dependencies(_x):
     return True
 
 
-@pytest.mark.only_clingo("Synthesized splices are not supported by the old concretizer")
 def test_simple_reuse(abi_splice_database, abi_splice_mock_packages, monkeypatch):
     spack.config.set("concretizer:reuse", True)
     monkeypatch.setattr(
@@ -176,7 +175,6 @@ def test_simple_reuse(abi_splice_database, abi_splice_mock_packages, monkeypatch
     foo.package.do_uninstall()
 
 
-@pytest.mark.only_clingo("Synthesized splices are not supported by the old concretizer")
 def test_simple_dep_reuse(abi_splice_database, abi_splice_mock_packages, monkeypatch):
     spack.config.set("concretizer:reuse", True)
     monkeypatch.setattr(
@@ -189,7 +187,6 @@ def test_simple_dep_reuse(abi_splice_database, abi_splice_mock_packages, monkeyp
     foo.package.do_uninstall()
 
 
-@pytest.mark.only_clingo("Synthesized splices are not supported by the old concretizer")
 def test_splice_installed_hash(abi_splice_database, abi_splice_mock_packages, monkeypatch):
     spack.config.set("concretizer:reuse", True)
     monkeypatch.setattr(
@@ -211,7 +208,6 @@ def test_splice_installed_hash(abi_splice_database, abi_splice_mock_packages, mo
     assert True
 
 
-@pytest.mark.only_clingo("Synthesized splices are not supported by the old concretizer")
 def test_splice_build_dep(abi_splice_database, abi_splice_mock_packages, monkeypatch):
     spack.config.set("concretizer:reuse", True)
     monkeypatch.setattr(
@@ -230,7 +226,6 @@ def test_splice_build_dep(abi_splice_database, abi_splice_mock_packages, monkeyp
     assert True
 
 
-@pytest.mark.only_clingo("Synthesized splices are not supported by the old concretizer")
 def test_mpi_splices(abi_splice_database, abi_splice_mock_packages, monkeypatch):
     spack.config.set("concretizer:reuse", True)
     monkeypatch.setattr(
@@ -256,7 +251,6 @@ def test_mpi_splices(abi_splice_database, abi_splice_mock_packages, monkeypatch)
     assert True
 
 
-@pytest.mark.only_clingo("Synthesized splices are not supported by the old concretizer")
 def test_double_splice(abi_splice_database, abi_splice_mock_packages, monkeypatch):
     spack.config.set("concretizer:reuse", True)
     monkeypatch.setattr(
@@ -287,7 +281,6 @@ def test_double_splice(abi_splice_database, abi_splice_mock_packages, monkeypatc
         s.package.do_uninstall()
 
         
-@pytest.mark.only_clingo("Synthesized splices are not supported by the old concretizer")
 def test_manyvariant_star_matching_variant_splice(
         abi_splice_database,
         abi_splice_mock_packages,
