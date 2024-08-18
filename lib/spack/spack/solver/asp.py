@@ -802,7 +802,7 @@ class PyclingoDriver:
         # This attribute will be reset at each call to solve
         self.control = None
 
-    def solve(self, setup, specs, reuse=None, output=None, control=None, allow_deprecated=False) -> Tuple[Result, Optional[spack.util.timer.Timer], None]:
+    def solve(self, setup, specs, reuse=None, output=None, control=None, allow_deprecated=False):
         """Set up the input and solve for dependencies of ``specs``.
 
         Arguments:
@@ -3443,6 +3443,7 @@ class SpecBuilder:
                 r"^external_conditions_hold$",
                 r"^node_compiler$",
                 r"^package_hash$",
+                r"^splice_hash$",
                 r"^root$",
                 r"^track_dependencies$",
                 r"^variant_default_value_from_cli$",
@@ -3475,26 +3476,13 @@ class SpecBuilder:
         # from this dictionary during reconstruction
         self._hash_lookup = hash_lookup or {}
 
-        self._splices: Dict[NodeArgument, List[Tuple[str, str, NodeArgument]]]
-        self._splices = {}
 
     def hash(self, node, h):
         if node not in self._specs:
-            self._specs[node] = self._hash_lookup[h]
-
-    def splice_hash(
-        self,
-        splice_node: NodeArgument,
-        orig_name: str,
-        splice_hash: str,
-        parent_node: NodeArgument,
-    ):
-        tup = (orig_name, splice_hash, splice_node)
-        if parent_node in self._splices:
-            self._splices[parent_node].append(tup)
-        else:
-            self._splices[parent_node] = [tup]
-        return
+            hash_spec = self._hash_lookup[h].copy()
+            node_spec = hash_spec.copy(deps=False)
+            node_spec.build_spec = hash_spec
+            self._specs[node] = node_spec
 
     def node(self, node):
         if node not in self._specs:
@@ -3674,36 +3662,9 @@ class SpecBuilder:
             return (0, 0)  # note out of order so this goes last
         elif name == "virtual_on_edge":
             return (1, 0)
-        elif name == "splice_hash":
-            return (2, 0)
         else:
             return (-1, 0)
 
-    def _finalize_splices(self):
-        for parent_node, splices in self._splices.items():
-            parent_spec = self._specs[parent_node]
-            build_spec = parent_spec.copy()
-            new_parent = parent_spec.copy(deps=False)
-            new_parent.build_spec = build_spec
-            spliced_names = set()
-            for orig_name, _, splice_node in splices:
-                orig_dependency = parent_spec.edges_to_dependencies(orig_name)[0]
-                virtuals = orig_dependency.virtuals
-                depflag = orig_dependency.depflag
-                new_parent.add_dependency_edge(
-                    self._specs[splice_node],
-                    depflag=depflag,
-                    virtuals=virtuals
-                )
-                spliced_names.add(orig_name)
-            for dep_edge in parent_spec.edges_to_dependencies():
-                if dep_edge.spec.name not in spliced_names:
-                    new_parent.add_dependency_edge(
-                        dep_edge.spec,
-                        depflag=dep_edge.depflag,
-                        virtuals=dep_edge.virtuals
-                    )
-            self._specs[parent_node] = new_parent
 
     def build_specs(self, function_tuples):
         # Functions don't seem to be in particular order in output.  Sort
@@ -3743,12 +3704,13 @@ class SpecBuilder:
                 # since node_flag_source is tracking information not in the spec itself
                 spec = self._specs.get(args[0])
                 if spec and spec.concrete:
-                    if name != "node_flag_source" and name != "splice_hash":
+                    do_not_ignore_attrs = ["node_flag_source", "depends_on"]
+                    if name not in do_not_ignore_attrs:
                         continue
 
             action(*args)
 
-        self._finalize_splices()
+        # self._finalize_splices()
         # fix flags after all specs are constructed
         self.reorder_flags()
 
