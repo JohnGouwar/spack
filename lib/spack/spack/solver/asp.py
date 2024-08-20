@@ -3736,6 +3736,13 @@ class SpecBuilder:
         for s in self._specs.values():
             spack.spec.Spec.ensure_no_deprecated(s)
 
+        # If a hash is reconstructed in the same way as it's build spec, then
+        # it was not spliced, and thus we should set the build spec to none. 
+        for s in self._specs.values():
+            if s.build_spec is not None:
+                if s.build_spec.eq_dag(s):
+                    s.build_spec = None
+
         # Add git version lookup info to concrete Specs (this is generated for
         # abstract specs as well but the Versions may be replaced during the
         # concretization process)
