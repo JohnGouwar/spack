@@ -18,6 +18,7 @@ import typing
 import warnings
 from contextlib import contextmanager
 from typing import Callable, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple, Type, Union
+from dataclasses import dataclass
 
 import archspec.cpu
 
@@ -147,7 +148,6 @@ class RequirementKind(enum.Enum):
     VIRTUAL = enum.auto()
     #: Requirement expressed on a specific package
     PACKAGE = enum.auto()
-
 
 class DeclaredVersion(NamedTuple):
     """Data class to contain information on declared versions used in the solve"""
@@ -379,6 +379,7 @@ class Result:
         self._concrete_specs_by_input = None
         self._concrete_specs = None
         self._unsolved_specs = None
+
 
     def format_core(self, core):
         """
@@ -3427,8 +3428,14 @@ class RuntimePropertyRecorder:
         self._setup.trigger_rules()
         self._setup.effect_rules()
 
+@dataclass
+class Splice:
+    splice_node: NodeArgument
+    child_name: str
+    child_hash: str
 
 class SpecBuilder:
+       
     """Class with actions to rebuild a spec from ASP results."""
 
     #: Regex for attributes that don't need actions b/c they aren't used to construct specs.
@@ -3443,7 +3450,6 @@ class SpecBuilder:
                 r"^external_conditions_hold$",
                 r"^node_compiler$",
                 r"^package_hash$",
-                r"^splice_hash$",
                 r"^root$",
                 r"^track_dependencies$",
                 r"^variant_default_value_from_cli$",
@@ -3467,6 +3473,14 @@ class SpecBuilder:
     def __init__(self, specs, hash_lookup=None):
         self._specs: Dict[NodeArgument, spack.spec.Spec]
         self._specs = {}
+
+
+        # Matches parent nodes to splice node
+        self._splices : Dict[NodeArgument, List[Splice]]
+        self._splices = {}
+        self._splice_dag: Dict[NodeArgument, List[NodeArgument]]
+        self._splice_dag = {}
+        
         self._result = None
         self._command_line_specs = specs
         self._flag_sources = collections.defaultdict(lambda: set())
@@ -3477,12 +3491,11 @@ class SpecBuilder:
         self._hash_lookup = hash_lookup or {}
 
 
+
+
     def hash(self, node, h):
         if node not in self._specs:
-            hash_spec = self._hash_lookup[h].copy()
-            node_spec = hash_spec.copy(deps=False)
-            node_spec.build_spec = hash_spec
-            self._specs[node] = node_spec
+            self._specs[node] = self._hash_lookup[h]
 
     def node(self, node):
         if node not in self._specs:
@@ -3561,16 +3574,12 @@ class SpecBuilder:
 
     def depends_on(self, parent_node, dependency_node, type):
         dependency_spec = self._specs[dependency_node]
-        edges = self._specs[parent_node].edges_to_dependencies(name=dependency_spec.name)
-        edges = [x for x in edges if id(x.spec) == id(dependency_spec)]
         depflag = dt.flag_from_string(type)
-
-        if not edges:
-            self._specs[parent_node].add_dependency_edge(
-                self._specs[dependency_node], depflag=depflag, virtuals=()
-            )
-        else:
-            edges[0].update_deptypes(depflag=depflag)
+        self._specs[parent_node].add_dependency_edge(
+            dependency_spec,
+            depflag=depflag,
+            virtuals=()
+        )
 
     def virtual_on_edge(self, parent_node, provider_node, virtual):
         dependencies = self._specs[parent_node].edges_to_dependencies(name=(provider_node.pkg))
@@ -3641,6 +3650,113 @@ class SpecBuilder:
     def deprecated(self, node: NodeArgument, version: str) -> None:
         tty.warn(f'using "{node.pkg}@{version}" which is a deprecated version')
 
+    def splice_at_hash(
+            self,
+            parent_node: NodeArgument,
+            splice_node: NodeArgument,
+            child_name: str,
+            child_hash: str
+    ):
+        splice = Splice( splice_node, child_name=child_name, child_hash=child_hash )
+        if parent_node not in self._splices:
+            self._splices[parent_node] = []
+        self._splices[parent_node].append(splice)
+
+    def splice_in_dependency(
+            self,
+            parent_node: NodeArgument,
+            child_node: Union[str, NodeArgument]
+    ):
+        if parent_node not in self._splice_dag:
+            self._splice_dag[parent_node] = []
+        # Hash is the base-case covered by splice_at_hash
+        if isinstance(child_node, NodeArgument):
+            self._splice_dag[parent_node].append(child_node)
+            
+    def _resolve_splices_for_node(
+            self,
+            node: NodeArgument,
+            resolved: Dict[NodeArgument, spack.spec.Spec]
+    ) -> spack.spec.Spec:
+        '''
+        This function both caches it's answer in resolved, and returns the
+        spec resulting from resolving splices in the nodes 
+        '''
+        # Bottom up caching
+        if node in resolved:
+            return resolved[node]
+        orig_spec = self._specs[node]
+        immediate_splices = self._splices.get(node, [])
+        deps_with_splices = self._splice_dag.get(node, [])
+        # This node has no splicing to be done to it. 
+        if len(immediate_splices) == 0 and len(deps_with_splices) == 0:
+            resolved[node] = orig_spec
+            return orig_spec
+        new_spec = orig_spec.copy(deps=False)
+        edges_by_dep_name = {}
+        for edge in orig_spec.edges_to_dependencies():
+            edge_name = edge.spec.name
+            assert type(edge_name) == str, "Anonymous dependency spec in splice"
+            if edge_name not in edges_by_dep_name:
+                edges_by_dep_name[edge_name] = []
+            edges_by_dep_name[edge_name].append(edge)
+        # This is the easy case, we can just copy unspliced dependencies
+        for name, edges in edges_by_dep_name.items():
+            if (name not in [s.child_name for s in immediate_splices] and
+                name not in [n.pkg for n in deps_with_splices]):
+                for e in edges:
+                    new_spec.add_dependency_edge(
+                        e.spec,
+                        depflag=e.depflag,
+                        virtuals=e.virtuals
+                    )
+        # This is the case where splices may occurr deeper in dependencies 
+        potential_clean_edges = set()
+        for dep_node in deps_with_splices:
+            old_dep_spec = self._specs[dep_node]
+            dep_name = old_dep_spec.name
+            edges = edges_by_dep_name[dep_name]
+            for e in edges:
+                if e.spec.dag_hash() == old_dep_spec.dag_hash():
+                    new_dep_spec = self._resolve_splices_for_node(dep_node, resolved)
+                    new_spec.add_dependency_edge(
+                        new_dep_spec,
+                        depflag=e.depflag,
+                        virtuals=e.virtuals
+                    )
+                    # if "build" in e.depflag.to_tuple() :
+                    #     # TODO: Build splitting
+                    #     pass
+                else:
+                    potential_clean_edges.add(e)
+        # This is the case where this node is being immediately spliced
+        for splice in immediate_splices:
+            splice_spec = self._resolve_splices_for_node(splice.splice_node, resolved)
+            for e in edges_by_dep_name[splice.child_name]:
+                if e.spec.dag_hash() == splice.child_hash:
+                    potential_clean_edges.discard(e)
+                    new_spec.add_dependency_edge(
+                        splice_spec,
+                        depflag=e.depflag,
+                        virtuals=e.virtuals
+                    )
+                else:
+                    potential_clean_edges.add(e)
+        for e in potential_clean_edges:
+            new_spec.add_dependency_edge(
+                e.spec,
+                depflag=e.depflag,
+                virtuals=e.virtuals
+            )
+
+        # By this point we have covered all of the dependencies, so we can add
+        # the build_spec, update the memo cache and return 
+        new_spec._build_spec = orig_spec
+        resolved[node] = new_spec
+        return new_spec
+    
+        
+    
     @staticmethod
     def sort_fn(function_tuple):
         """Ensure attributes are evaluated in the correct order.
@@ -3702,15 +3818,19 @@ class SpecBuilder:
                 # if we've already gotten a concrete spec for this pkg,
                 # do not bother calling actions on it except for node_flag_source,
                 # since node_flag_source is tracking information not in the spec itself
+                # we also need to keep track of splicing information.
                 spec = self._specs.get(args[0])
                 if spec and spec.concrete:
-                    do_not_ignore_attrs = ["node_flag_source", "depends_on"]
+                    do_not_ignore_attrs = [
+                        "node_flag_source",
+                        "splice_at_hash",
+                        "splice_in_dependency"
+                    ]
                     if name not in do_not_ignore_attrs:
                         continue
 
             action(*args)
 
-        # self._finalize_splices()
         # fix flags after all specs are constructed
         self.reorder_flags()
 
@@ -3728,7 +3848,12 @@ class SpecBuilder:
 
         for s in self._specs.values():
             _develop_specs_from_env(s, ev.active_environment())
-
+        
+        if spack.config.CONFIG.get("concretizer:splice"):
+            resolved_splices = {}
+            for node in self._specs:
+                self._resolve_splices_for_node(node, resolved_splices)
+            self._specs = resolved_splices
         # mark concrete and assign hashes to all specs in the solve
         for root in roots.values():
             root._finalize_concretization()
@@ -3736,12 +3861,6 @@ class SpecBuilder:
         for s in self._specs.values():
             spack.spec.Spec.ensure_no_deprecated(s)
 
-        # If a hash is reconstructed in the same way as it's build spec, then
-        # it was not spliced, and thus we should set the build spec to none. 
-        for s in self._specs.values():
-            if s.build_spec is not None:
-                if s.build_spec.eq_dag(s):
-                    s.build_spec = None
 
         # Add git version lookup info to concrete Specs (this is generated for
         # abstract specs as well but the Versions may be replaced during the

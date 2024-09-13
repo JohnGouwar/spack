@@ -1397,7 +1397,8 @@ attr("node_flag", PackageNode, FlagType, Flag) :- attr("node_flag_set", PackageN
 #defined hash_attr/7.
 
 { attr("hash", node(ID, PackageName), Hash): installed_hash(PackageName, Hash) } 1 :-
-  attr("node", node(ID, PackageName)).
+  attr("node", node(ID, PackageName)),
+  internal_error("Package must resolve to at most 1 hash").
 % you can't choose an installed hash for a dev spec
 :- attr("hash", PackageNode, Hash), attr("variant_value", PackageNode, "dev_path", _).
 % You can't install a hash, if it is not installed
@@ -1421,20 +1422,21 @@ imposed_constraint(Hash, Attr, PackageName, Arg1, Arg2) :-
   Attr != "virtual_on_edge".
 imposed_constraint(Hash, Attr, PackageName, A1, A2, A3) :-
   hash_attr(Hash, Attr, PackageName, A1, A2, A3).
-
+imposed_constraint(Hash, "hash", PackageName, Hash) :- installed_hash(PackageName, Hash).
 % Without splicing, we simply recover the exact semantics 
-imposed_constraint(Hash, "hash", HashName, ImpHash) :- 
-  hash_attr(Hash, "hash", HashName, ImpHash),
-  not abi_splice_conditions_hold(_, _, HashName, ImpHash).
+imposed_constraint(ParentHash, "hash", ChildName, ChildHash) :- 
+  hash_attr(ParentHash, "hash", ChildName, ChildHash),
+  ChildHash != ParentHash,
+  not abi_splice_conditions_hold(_, _, ChildName, ChildHash).
   
 imposed_constraint(Hash, "depends_on", PackageName, DepName, Type) :-
   hash_attr(Hash, "depends_on", PackageName, DepName, Type),
   hash_attr(Hash, "hash", DepName, DepHash),
-  not attr("splice_hash", _, DepName, DepHash, _).
+  not attr("splice_at_hash", _, _, DepName, DepHash).
   
 imposed_constraint(Hash, "virtual_on_edge", PackageName, DepName, VirtName) :-
   hash_attr(Hash, "virtual_on_edge", PackageName, DepName, VirtName),
-  not attr("splice_hash", _, DepName, _, _).
+  not attr("splice_at_hash", _, _, DepName,_).
 
 % Rules pertaining to attr("splice_hash") and abi_splice_conditions_hold will
 % be conditionally loaded from splices.lp
@@ -1442,7 +1444,7 @@ imposed_constraint(Hash, "virtual_on_edge", PackageName, DepName, VirtName) :-
 impose(Hash, PackageNode) :- attr("hash", PackageNode, Hash), attr("node", PackageNode).
 
 % If there is not a hash for a package, we build it. 
-build(PackageNode) :- attr("node", PackageNode), not attr("hash", PackageNode, _).
+build(PackageNode) :- attr("node", PackageNode), not concrete(PackageNode).
 
 
 % Minimizing builds is tricky. We want a minimizing criterion

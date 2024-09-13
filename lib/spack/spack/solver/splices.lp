@@ -19,7 +19,7 @@
 %   attr("variant_value", node(SID, "foo"), "a", "True"),
 %   hash_attr("hash", "variant_value", "foo", "a", "True"),
 %   attr("variant_value", node(SID, "foo"), "b", VariVar0),
-%   hash_attr("hash", "variant_value", "foo", "a", VariVar0),
+%   hash_attr("hash", "variant_value", "foo", "b", VariVar0),
 
 % If the splice is valid (i.e. abi_splice_conditions_hold is derived) in the
 % dependency of a concrete spec the solver free to choose whether to continue
@@ -29,20 +29,25 @@
   hash_attr(ParentHash, "hash", ChildName, ChildHash),
   abi_splice_conditions_hold(_, node(SID, SpliceName), ChildName, ChildHash).
 
-attr("splice_hash", node(SID, SpliceName), ChildName, ChildHash, ParentNode) :-
+attr("splice_at_hash", ParentNode, node(SID, SpliceName), ChildName, ChildHash) :-
   attr("hash", ParentNode, ParentHash),
   hash_attr(ParentHash, "hash", ChildName, ChildHash),
   abi_splice_conditions_hold(_, node(SID, SpliceName), ChildName, ChildHash),
   not imposed_constraint(ParentHash, "hash", ChildName, ChildHash).
   
 % Names and virtual providers may change when a dependency is spliced in
-imposed_constraint(Hash, "dependency_holds", PackageName, SpliceName, Type) :-
-  hash_attr(Hash, "depends_on", PackageName, DepName, Type),
+imposed_constraint(Hash, "dependency_holds", ParentName, SpliceName, Type) :-
+  hash_attr(Hash, "depends_on", ParentName, DepName, Type),
   hash_attr(Hash, "hash", DepName, DepHash),
-  attr("splice_hash", node(SID, SpliceName), DepName, DepHash, node(ID, PackageName)).
+  attr("splice_at_hash", node(ID, ParentName), node(SID, SpliceName), DepName, DepHash).
   
-imposed_constraint(Hash, "virtual_on_edge", PackageName, SpliceName, VirtName) :-
-  hash_attr(Hash, "virtual_on_edge", PackageName, DepName, VirtName),
-  attr("splice_hash", node(SID, SpliceName), DepName, _, _).
+imposed_constraint(Hash, "virtual_on_edge", ParentName, SpliceName, VirtName) :-
+  hash_attr(Hash, "virtual_on_edge", ParentName, DepName, VirtName),
+  attr("splice_at_hash", node(ID, ParentName), node(SID, SpliceName), DepName, DepHash).
 
+attr("splice_in_dependency", ParentNode, DepHash) :-
+  attr("splice_at_hash", ParentNode, SpliceNode, DepName, DepHash).
 
+attr("splice_in_dependency", ParentNode, ChildNode) :-
+  attr("splice_in_dependency", ChildNode, _),
+  depends_on(ParentNode, ChildNode).
