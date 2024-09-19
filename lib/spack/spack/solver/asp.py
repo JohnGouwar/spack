@@ -3680,7 +3680,7 @@ class SpecBuilder:
     ) -> spack.spec.Spec:
         '''
         This function both caches it's answer in resolved, and returns the
-        spec resulting from resolving splices in the nodes 
+        spec resulting from resolving splices in the nodes
         '''
         # Bottom up caching
         if node in resolved:
@@ -3712,6 +3712,7 @@ class SpecBuilder:
                     )
         # This is the case where splices may occurr deeper in dependencies 
         potential_clean_edges = set()
+        dirty_edges = set()
         for dep_node in deps_with_splices:
             old_dep_spec = self._specs[dep_node]
             dep_name = old_dep_spec.name
@@ -3719,14 +3720,21 @@ class SpecBuilder:
             for e in edges:
                 if e.spec.dag_hash() == old_dep_spec.dag_hash():
                     new_dep_spec = self._resolve_splices_for_node(dep_node, resolved)
-                    new_spec.add_dependency_edge(
-                        new_dep_spec,
-                        depflag=e.depflag,
-                        virtuals=e.virtuals
-                    )
-                    # if "build" in e.depflag.to_tuple() :
-                    #     # TODO: Build splitting
-                    #     pass
+                    build_dep = e.depflag & dt.BUILD
+                    other_deps = e.depflag & ~dt.BUILD
+                    if other_deps:
+                        new_spec.add_dependency_edge(
+                            new_dep_spec,
+                            depflag=other_deps,
+                            virtuals=e.virtuals
+                        )
+                    if build_dep:
+                        new_spec.add_dependency_edge(
+                            e.spec,
+                            depflag=dt.BUILD,
+                            virtuals=e.virtuals
+                        )
+                    dirty_edges.add(e)
                 else:
                     potential_clean_edges.add(e)
         # This is the case where this node is being immediately spliced
@@ -3735,13 +3743,23 @@ class SpecBuilder:
             for e in edges_by_dep_name[splice.child_name]:
                 if e.spec.dag_hash() == splice.child_hash:
                     potential_clean_edges.discard(e)
+                    build_dep = e.depflag & dt.BUILD
+                    other_deps = e.depflag & ~dt.BUILD
                     new_spec.add_dependency_edge(
                         splice_spec,
-                        depflag=e.depflag,
+                        depflag=other_deps,
                         virtuals=e.virtuals
                     )
+                    if build_dep:
+                        new_spec.add_dependency_edge(
+                            e.spec,
+                            depflag=dt.BUILD,
+                            virtuals=e.virtuals
+                        )
                 else:
-                    potential_clean_edges.add(e)
+                    if e not in dirty_edges:
+                        potential_clean_edges.add(e)
+        # We have now looked at all of the edges, so these are clean 
         for e in potential_clean_edges:
             new_spec.add_dependency_edge(
                 e.spec,
