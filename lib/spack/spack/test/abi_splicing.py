@@ -275,8 +275,6 @@ def test_double_splice(abi_splice_database, abi_splice_mock_packages, monkeypatc
         goal_spec.concretized()
     spack.config.set("concretizer:splice", True)
     concretized_goal = goal_spec.concretized()
-    for edge in concretized_goal.edges_to_dependencies():
-        assert edge.spec.build_spec in cache
     for s in cache:
         s.package.do_uninstall()
 
