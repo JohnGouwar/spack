@@ -7,10 +7,18 @@
 % These rules are conditionally loaded to handle the synthesis of spliced
 % packages.
 % =============================================================================
-
-% Rules that derive abi_splice_conditions_hold will be generated from packages'
+% Consider the concrete spec:
+% foo@2.72%gcc@11.4 arch=linux-ubuntu22.04-icelake build_system=autotools ^bar ...
+% It will emit the following facts for reuse (below is a subset)
+% installed_hash("foo", "xxxyyy")
+% hash_attr("xxxyyy", "hash", "foo", "xxxyyy")
+% hash_attr("xxxyyy", "version", "foo", "2.72")
+% hash_attr("xxxyyy", "node_os", "ubuntu22.04")
+% hash_attr("xxxyyy", "hash", "bar", "zzzqqq")
+% hash_attr("xxxyyy", "depends_on", "foo", "bar", "link")
+% Rules that derive abi_splice_conditions_hold will be generated from 
 % use of the `can_splice` directive. The will have the following form:
-% can_splice("foo@1.0.0+a", when=@1.0.1+a", match_variants=["b"]) --->
+% can_splice("foo@1.0.0+a", when="@1.0.1+a", match_variants=["b"]) --->
 % abi_splice_conditions_hold(0, node(SID, "foo"), "foo", BashHash) :-
 %   installed_hash("foo", BaseHash),
 %   attr("node", node(SID, SpliceName)),

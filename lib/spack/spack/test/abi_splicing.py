@@ -406,3 +406,4 @@ def test_external_splice_mpi(abi_splice_database, abi_splice_mock_packages, monk
     spack.config.set("concretizer:splice", True)
     for s in goal_specs:
         s.concretized()
+
