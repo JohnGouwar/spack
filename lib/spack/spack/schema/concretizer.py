@@ -8,6 +8,7 @@
    :lines: 12-
 """
 from typing import Any, Dict
+from .spec_list import spec_list_schema
 
 LIST_OF_SPECS = {"type": "array", "items": {"type": "string"}}
 
@@ -73,8 +74,13 @@ properties: Dict[str, Any] = {
                             },
                         },
                     },
-                    "automatic": {"type": "boolean"},
-                },
+                    "automatic": {
+                        "oneOf": [
+                            {"type": "boolean"},
+                            spec_list_schema
+                        ]
+                    }
+                }, 
             },
             "duplicates": {
                 "type": "object",
