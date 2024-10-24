@@ -857,7 +857,7 @@ class PyclingoDriver:
             self.control.load(os.path.join(parent_dir, "libc_compatibility.lp"))
         else:
             self.control.load(os.path.join(parent_dir, "os_compatibility.lp"))
-        if setup.enable_splicing:
+        if spack.config.get("concretizer:splice:automatic") is not False:
             self.control.load(os.path.join(parent_dir, "splices.lp"))
 
         timer.stop("load")
@@ -1170,8 +1170,6 @@ class SpackSolverSetup:
         # list of unique libc specs targeted by compilers (or an educated guess if no compiler)
         self.libcs: List[spack.spec.Spec] = []
 
-        # If true, we have to load the code for synthesizing splices
-        self.enable_splicing: bool = spack.config.CONFIG.get("concretizer:splice:automatic")
 
     def pkg_version_rules(self, pkg):
         """Output declared versions of a package.
@@ -1344,7 +1342,7 @@ class SpackSolverSetup:
         self.package_dependencies_rules(pkg)
 
         # splices
-        if self.enable_splicing:
+        if spack.config.get("concretizer:splice:automatic") is not False:
             self.package_splice_rules(pkg)
 
         # virtual preferences
@@ -1716,6 +1714,17 @@ class SpackSolverSetup:
         for i, (cond, (spec_to_splice, match_variants)) in enumerate(
             sorted(pkg.splice_specs.items())
         ):
+            if isinstance(spack.config.get("concretizer:splice:automatic"), list):
+                specs_to_splice = []
+                for spec_str in spack.config.get("concretizer:splice:automatic"):
+                    try:
+                        constrained_spec = spec_to_splice.constrained(spec_str)
+                        specs_to_splice.append(constrained_spec)
+                        print(f"Constrained {spec_to_splice} with {spec_str} into {constrained_spec}")
+                    except:
+                        continue
+            else:
+                specs_to_splice = [spec_to_splice]
             with named_spec(cond, pkg.name):
                 self.version_constraints.add((cond.name, cond.versions))
                 self.version_constraints.add((spec_to_splice.name, spec_to_splice.versions))
@@ -1731,48 +1740,47 @@ class SpackSolverSetup:
                     if args[0] == "variant_value":
                         explicit_variants.append(args[2])
                     when_spec_attrs.append(fn.attr(args[0], splice_node, *args[2:]))
-
-                for c in self.spec_clauses(spec_to_splice, body=True, required_from=None):
-                    args = c.args
-                    if args[0] == "node":
-                        continue
-                    if args[0] == "variant_value":
-                        explicit_variants.append(args[2])
-                    splice_spec_hash_attrs.append(fn.hash_attr(hash_var, *args))
-                if match_variants is None:
-                    variant_constraints = []
-                elif match_variants == "*":
-                    filt_match_variants = set()
-                    for map in pkg.variants.values():
-                        for k in map:
-                            filt_match_variants.add(k)
-                    filt_match_variants = list(filt_match_variants)
-                    variant_constraints = self._gen_match_variant_splice_constraints(
-                        pkg, cond, spec_to_splice, hash_var, splice_node, filt_match_variants
-                    )
-                else:
-                    if any(v in explicit_variants for v in match_variants):
-                        raise Exception(
-                            "Overlap between match_variants and explicitly set variants"
+                for spec in specs_to_splice:
+                    for c in self.spec_clauses(spec, body=True, required_from=None):
+                        args = c.args
+                        if args[0] == "node":
+                            continue
+                        if args[0] == "variant_value":
+                            explicit_variants.append(args[2])
+                        splice_spec_hash_attrs.append(fn.hash_attr(hash_var, *args))
+                    if match_variants is None:
+                        variant_constraints = []
+                    elif match_variants == "*":
+                        filt_match_variants = set()
+                        for map in pkg.variants.values():
+                            for k in map:
+                                filt_match_variants.add(k)
+                        filt_match_variants = list(filt_match_variants)
+                        variant_constraints = self._gen_match_variant_splice_constraints(
+                            pkg, cond, spec, hash_var, splice_node, filt_match_variants
                         )
-                    variant_constraints = self._gen_match_variant_splice_constraints(
-                        pkg, cond, spec_to_splice, hash_var, splice_node, match_variants
-                    )
+                    else:
+                        if any(v in explicit_variants for v in match_variants):
+                            raise Exception(
+                                "Overlap between match_variants and explicitly set variants"
+                            )
+                        variant_constraints = self._gen_match_variant_splice_constraints(
+                            pkg, cond, spec, hash_var, splice_node, match_variants
+                        )
 
-                rule_head = fn.abi_splice_conditions_hold(
-                    i, splice_node, spec_to_splice.name, hash_var
-                )
-                rule_body_components = [
-                    # splice_set_fact,
-                    fn.attr("node", splice_node),
-                    fn.installed_hash(spec_to_splice.name, hash_var),
-                ]
-                rule_body_components.extend(when_spec_attrs)
-                rule_body_components.extend(splice_spec_hash_attrs)
-                rule_body_components.extend(variant_constraints)
-                rule_body = ",\n  ".join(str(r) for r in rule_body_components)
-                rule = f"{rule_head} :-\n  {rule_body}."
-                self.gen.append(rule)
+                    rule_head = fn.abi_splice_conditions_hold(
+                        i, splice_node, spec.name, hash_var
+                    )
+                    rule_body_components = [
+                        fn.attr("node", splice_node),
+                        fn.installed_hash(spec.name, hash_var),
+                    ]
+                    rule_body_components.extend(when_spec_attrs)
+                    rule_body_components.extend(splice_spec_hash_attrs)
+                    rule_body_components.extend(variant_constraints)
+                    rule_body = ",\n  ".join(str(r) for r in rule_body_components)
+                    rule = f"{rule_head} :-\n  {rule_body}."
+                    self.gen.append(rule)
 
             self.gen.newline()
 

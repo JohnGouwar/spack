@@ -219,3 +219,44 @@ def test_external_splice_same_name(splicing_setup):
         for s in goal_specs:
             s.concretized()
     assert True
+
+def test_constrained_splicing_allows_splices(splicing_setup):
+    cache = [
+        "splice-h@1.0.0 ^splice-z@1.0.0+compat+bar"
+    ]
+    packages_yaml = _make_specs_non_buildable(["splice-h"])
+    splicing_config = {
+        "splice": {"automatic": ["splice-z@1.0.0+bar"]}
+    }
+    goal_specs = [
+        Spec("splice-h ^splice-z@1.0.2"),
+        Spec("splice-h ^splice-z@1.0.1")
+    ]
+    with CacheManager(cache):
+        spack.config.set("packages", packages_yaml)
+        spack.config.set("concretizer", splicing_config)
+        for s in goal_specs:
+            s.concretized()
+        
+def test_constrained_splicing_rejects_splices(splicing_setup):
+    cache = [
+        "splice-h@1.0.0 ^splice-z@1.0.0+compat+bar"
+    ]
+    packages_yaml = _make_specs_non_buildable(["splice-h"])
+    splicing_config = {
+        "splice": {"automatic": ["splice-z@1.0.0~bar"]}
+    }
+    goal_specs = [
+        Spec("splice-h ^splice-z@1.0.2"),
+        Spec("splice-h ^splice-z@1.0.1")
+    ]
+    with CacheManager(cache):
+        spack.config.set("packages", packages_yaml)
+        _enable_splicing()
+        for s in goal_specs:
+            s.concretized()
+        spack.config.set("concretizer", splicing_config)
+        for s in goal_specs:
+            with pytest.raises(Exception):
+                print(s.concretized())
+    
